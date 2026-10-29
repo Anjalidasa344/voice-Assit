@@ -1,191 +1,365 @@
 
-import pyttsx3
-import speech_recognition as sr
-import wikipedia
+import datetime
+import random
 import webbrowser
-import os
+import speech_recognition as sr
+import pyttsx3
+import wikipedia
+from ddgs import DDGS
 
+# -------------------------------
+# AMIGO VOICE ASSISTANT - VERSION 3.2
+# -------------------------------
 
-# Initialize text-to-speech engine
+# Text-to-speech setup
 engine = pyttsx3.init("sapi5")
+engine.setProperty("rate", 150)
+engine.setProperty("volume", 1.0)
 
-# Select a female voice if available
-voices = engine.getProperty("voices")
-if len(voices) > 1:
-    engine.setProperty("voice", voices[1].id)
+try:
+    voices = engine.getProperty("voices")
+    if voices:
+        engine.setProperty("voice", voices[0].id)
+except Exception as error:
+    print("Voice setup error:", error)
 
 
-def speak(audio):
-    """Convert text into speech."""
-    engine.say(audio)
-    engine.runAndWait()
+# -------------------------------
+# SPEAK FUNCTION
+# -------------------------------
 
+def speak(text):
+    import subprocess, sys
+    message = str(text).strip()
+    if not message:
+        return
+    print("Amigo:", message)
+    voice_code = 'import sys, pyttsx3; e=pyttsx3.init("sapi5"); e.setProperty("volume", 1.0); e.setProperty("rate", 150); e.say(sys.argv[1]); e.runAndWait(); e.stop()'
+    try:
+        subprocess.run([sys.executable, "-c", voice_code, message], check=False)
+    except Exception as error:
+        print("Speech Error:", error)
 
 def take_command():
-    """Listen to the microphone and recognize speech."""
     recognizer = sr.Recognizer()
 
-    recognizer.energy_threshold = 300
-    recognizer.dynamic_energy_threshold = True
-    recognizer.pause_threshold = 0.8
-    recognizer.non_speaking_duration = 0.5
+    with sr.Microphone() as source:
+        print("\nListening...")
+        recognizer.adjust_for_ambient_noise(source, duration=0.5)
 
-    try:
-        # Use laptop microphone (device index 1)
-        with sr.Microphone(device_index=1) as source:
-            print("\nListening... Speak now!")
-
-            recognizer.adjust_for_ambient_noise(
-                source, duration=1
-            )
-
+        try:
             audio = recognizer.listen(
                 source,
-                timeout=10,
-                phrase_time_limit=6
+                timeout=5,
+                phrase_time_limit=8
             )
 
-        print("Recognizing...")
+            print("Recognizing...")
+            command = recognizer.recognize_google(
+                audio,
+                language="en-IN"
+            )
 
-        query = recognizer.recognize_google(
-            audio,
-            language="en-IN"
-        )
+            print("You:", command)
+            return command.lower()
 
-        print("You said:", query)
-        return query.lower()
+        except sr.WaitTimeoutError:
+            print("No voice detected.")
+            return ""
 
-    except sr.WaitTimeoutError:
-        print("No speech detected.")
+        except sr.UnknownValueError:
+            print("Speech was not clear.")
+            return ""
 
-    except sr.UnknownValueError:
-        print("Sorry, I could not understand.")
+        except sr.RequestError:
+            speak("Speech recognition service is unavailable.")
+            return ""
 
-    except sr.RequestError:
-        print("Speech recognition service is unavailable. Check your internet.")
-
-    except OSError as error:
-        print("Microphone error:", error)
-
-    return ""
-
-
-def search_wikipedia(query):
-    """Search Wikipedia and speak a short summary."""
-    try:
-        search_query = query.replace("wikipedia", "").strip()
-
-        if not search_query:
-            speak("Please tell me what to search.")
-            return
-
-        speak("Searching Wikipedia.")
-
-        result = wikipedia.summary(
-            search_query,
-            sentences=2
-        )
-
-        print(result)
-
-        speak("According to Wikipedia.")
-        speak(result)
-
-    except wikipedia.exceptions.DisambiguationError:
-        speak("Multiple results found. Please be more specific.")
-
-    except wikipedia.exceptions.PageError:
-        speak("Sorry, no Wikipedia page was found.")
-
-    except Exception:
-        speak("Unable to search Wikipedia. Please check your internet connection.")
+        except Exception as error:
+            print("Microphone error:", error)
+            return ""
 
 
-def open_website(name, url):
-    """Open a website in the default browser."""
-    speak("Opening " + name)
-    webbrowser.open(url)
+# -------------------------------
+# GREETING FUNCTION
+# -------------------------------
 
+def wish_me():
+    hour = datetime.datetime.now().hour
 
-def open_drive(drive):
-    """Open a local disk if it exists."""
-    path = drive + ":\\"
+    if hour < 12:
+        speak("Good morning!")
 
-    if os.path.exists(path):
-        speak("Opening local disk " + drive)
-        os.startfile(path)
+    elif hour < 17:
+        speak("Good afternoon!")
+
     else:
-        speak("That disk is not available.")
+        speak("Good evening!")
 
-
-def main():
-    speak("Amigo voice assistant activated.")
+    speak("Hello! I am Amigo, your voice assistant.")
     speak("How can I help you?")
 
-    while True:
-        query = take_command()
 
-        if not query:
+# -------------------------------
+# WEB SEARCH FUNCTION
+# -------------------------------
+
+last_search_url = ""
+
+
+def search_web(topic):
+    global last_search_url
+
+    speak("Searching the internet for " + topic)
+
+    try:
+        with DDGS() as ddgs:
+            results = list(
+                ddgs.text(
+                    topic,
+                    max_results=8
+                )
+            )
+
+        if not results:
+            speak("Sorry, I could not find any results.")
+            return
+
+        # Remove duplicate titles
+        unique_results = []
+        seen_titles = set()
+
+        for result in results:
+            title = result.get("title", "").strip()
+            summary = result.get("body", "").strip()
+            link = result.get("href", "").strip()
+
+            if title and title.lower() not in seen_titles:
+                seen_titles.add(title.lower())
+
+                unique_results.append({
+                    "title": title,
+                    "summary": summary,
+                    "link": link
+                })
+
+        if not unique_results:
+            speak("No useful results were found.")
+            return
+
+        # Select up to three results
+        selected_results = unique_results[:3]
+
+        speak("I found some information for you.")
+
+        for index, result in enumerate(selected_results, start=1):
+            title = result["title"]
+            summary = result["summary"]
+            link = result["link"]
+
+            print("\nResult", index)
+            print("Title:", title)
+            print("Information:", summary)
+            print("Link:", link)
+
+            # UPDATED: Speak title and summary together
+            if summary:
+                speak(title + ". " + summary)
+            else:
+                speak(title)
+
+            if link:
+                last_search_url = link
+
+        speak("That is the information I found.")
+
+    except Exception as error:
+        print("Search error:", error)
+        speak("Sorry, I could not complete the web search.")
+
+
+# -------------------------------
+# WIKIPEDIA SEARCH
+# -------------------------------
+
+def search_wikipedia(topic):
+    speak("Searching Wikipedia.")
+
+    try:
+        result = wikipedia.summary(
+            topic,
+            sentences=3,
+            auto_suggest=True
+        )
+
+        print("\nWikipedia Information:")
+        print(result)
+
+        speak(result)
+
+    except Exception:
+        speak("I could not find information on Wikipedia.")
+        search_web(topic)
+
+
+# -------------------------------
+# MAIN ASSISTANT FUNCTION
+# -------------------------------
+
+def run_amigo():
+    wish_me()
+
+    while True:
+        command = take_command()
+
+        if not command:
             continue
 
-        if "wikipedia" in query:
-            search_wikipedia(query)
-
-        elif "who are you" in query or "are you" in query:
-            speak("I am Amigo, your Python voice assistant.")
-
-        elif "open youtube" in query:
-            open_website(
-                "YouTube",
-                "https://www.youtube.com"
-            )
-
-        elif "open google" in query:
-            open_website(
-                "Google",
-                "https://www.google.com"
-            )
-
-        elif "open github" in query:
-            open_website(
-                "GitHub",
-                "https://www.github.com"
-            )
-
-        elif "open stackoverflow" in query:
-            open_website(
-                "Stack Overflow",
-                "https://stackoverflow.com"
-            )
-
-        elif "open spotify" in query or "play music" in query:
-            open_website(
-                "Spotify",
-                "https://open.spotify.com"
-            )
-
-        elif "open whatsapp" in query:
-            open_website(
-                "WhatsApp Web",
-                "https://web.whatsapp.com"
-            )
-
-        elif "local disk c" in query:
-            open_drive("C")
-
-        elif "local disk d" in query:
-            open_drive("D")
-
-        elif "local disk e" in query:
-            open_drive("E")
-
-        elif any(word in query for word in ["exit", "quit", "stop", "sleep"]):
-            speak("Goodbye! Amigo is shutting down.")
+        # EXIT COMMANDS
+        if any(word in command for word in [
+            "exit", "stop", "quit", "goodbye",
+            "shut down", "close amigo"
+        ]):
+            speak("Goodbye! Have a nice day.")
             break
 
-        else:
-            speak("Sorry, I don't know that command yet.")
+        # GREETINGS
+        elif any(word in command for word in [
+            "hello", "hi", "hey"
+        ]):
+            speak("Hello! How can I help you?")
 
+        # INTRODUCTION
+        elif "who are you" in command or "your name" in command:
+            speak("I am Amigo, your personal voice assistant.")
+            speak("I can search the internet, tell the time, and open applications.")
+
+        # HELP
+        elif "help" in command or "what can you do" in command:
+            speak(
+                "I can search the internet, search Wikipedia, "
+                "tell the time and date, open websites and applications, "
+                "and tell jokes."
+            )
+
+        # TIME
+        elif "time" in command:
+            current_time = datetime.datetime.now().strftime("%I:%M %p")
+            speak("The current time is " + current_time)
+
+        # DATE
+        elif "date" in command or "today" in command:
+            current_date = datetime.datetime.now().strftime("%d %B %Y")
+            speak("Today's date is " + current_date)
+
+        # OPEN YOUTUBE
+        elif "open youtube" in command:
+            speak("Opening YouTube.")
+            webbrowser.open("https://www.youtube.com")
+
+        # OPEN GOOGLE
+        elif "open google" in command:
+            speak("Opening Google.")
+            webbrowser.open("https://www.google.com")
+
+        # OPEN NOTEPAD
+        elif "open notepad" in command:
+            speak("Opening Notepad.")
+            import subprocess
+            subprocess.Popen(["notepad.exe"])
+
+        # OPEN CALCULATOR
+        elif "open calculator" in command:
+            speak("Opening Calculator.")
+            import subprocess
+            subprocess.Popen(["calc.exe"])
+
+        # OPEN LAST SEARCH RESULT
+        elif "open result" in command or "open last result" in command:
+            if last_search_url:
+                speak("Opening the last search result.")
+                webbrowser.open(last_search_url)
+            else:
+                speak("There is no previous search result.")
+
+        # SEARCH WIKIPEDIA
+        elif "wikipedia" in command:
+            topic = command.replace("wikipedia", "").strip()
+
+            if not topic:
+                speak("Please tell me what you want to search on Wikipedia.")
+            else:
+                search_wikipedia(topic)
+
+        # SEARCH GOOGLE / INTERNET
+        elif "search for" in command:
+            topic = command.replace("search for", "").strip()
+
+            if topic:
+                search_web(topic)
+            else:
+                speak("Please tell me what you want to search.")
+
+        elif "search google for" in command:
+            topic = command.replace("search google for", "").strip()
+
+            if topic:
+                search_web(topic)
+            else:
+                speak("Please tell me what you want to search.")
+
+        # GENERAL QUESTIONS
+        elif command.startswith("who is"):
+            topic = command.replace("who is", "").strip()
+            search_web(topic)
+
+        elif command.startswith("what is"):
+            topic = command.replace("what is", "").strip()
+            search_web(topic)
+
+        elif command.startswith("where is"):
+            topic = command.replace("where is", "").strip()
+            search_web(topic)
+
+        elif command.startswith("how to"):
+            topic = command.strip()
+            search_web(topic)
+
+        # JOKES
+        elif "joke" in command:
+            jokes = [
+                "Why did the computer go to the doctor? Because it had a virus!",
+                "Why do programmers prefer dark mode? Because light attracts bugs!",
+                "Why was the computer cold? Because it left its Windows open!"
+            ]
+
+            speak(random.choice(jokes))
+
+        # THANK YOU
+        elif "thank you" in command or "thanks" in command:
+            speak("You are welcome! I am always happy to help.")
+
+        # HOW ARE YOU
+        elif "how are you" in command:
+            speak("I am doing great. Thank you for asking!")
+
+        # UNKNOWN COMMAND
+        else:
+            speak("Sorry, I did not understand that command.")
+            speak("Please try again.")
+
+
+# -------------------------------
+# START AMIGO
+# -------------------------------
 
 if __name__ == "__main__":
-    main()
+    try:
+        run_amigo()
+
+    except KeyboardInterrupt:
+        speak("Amigo is closing. Goodbye!")
+
+    except Exception as error:
+        print("Assistant error:", error)
+        speak("Something went wrong. Please try again.")
